@@ -22,7 +22,7 @@ class Linear_Transformer_Encoder(tf.keras.Model):
     def call(self,x):
         positional_encoding = self.pos_enc(x)
         x = x+positional_encoding
-
+        # print(x.shape)
         for mha,do,norm,ffn,norm2 in zip(self.MHA,self.do1,self.norm1,self.FFN,self.norm2):
             
             attn1 = mha(x,x,x)

@@ -34,10 +34,11 @@ def collate_fn_mnist_generative(batch):
     image,label = zip(*batch)
 
     images=[]
-    # labels=[]
+    labels=[]
     for (im,l) in (zip(image,label)):
         images.append(im.reshape(-1,1))
-        # labels.append(l)
+        labels.append(l.reshape(1))
 
     x= tf.stack(images)
-    return x[:,0:784//2,:],x[:,784//2:,:]
+    y = tf.stack(labels)
+    return x[:,0:784//2,:],x[:,784//2:,:],y

@@ -3,7 +3,7 @@ from tensorflow.keras.layers import Dense
 import math
 
 @tf.function(jit_compile=True)
-def project_feat_FAVOR(X,is_query=False):
+def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
     """
     Projects Tensor according to approximate softmax kernel.
     Args:
@@ -11,9 +11,9 @@ def project_feat_FAVOR(X,is_query=False):
     """
     data_normalizer = 1.0 / (math.sqrt(math.sqrt(X.shape[-1])))
     X = data_normalizer*X
-    W = tf.random.normal((1,X.shape[3],X.shape[3]))
+    W = tf.random.normal((1,n_rand_feats,X.shape[3]))
     W_,_= tf.linalg.qr(W)
-    W_ /= tf.linalg.norm(W_,axis=2)
+    W_ /= tf.linalg.norm(W_,axis=1,keepdims=True)
     W_ *= math.sqrt(X.shape[3])#
     W_ = tf.repeat(W_,X.shape[0],axis=0)
     
