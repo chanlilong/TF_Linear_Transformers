@@ -2,14 +2,16 @@ import tensorflow as tf
 import math
 from tensorflow.keras.layers import Dense,LayerNormalization,Dropout
 from tensorflow.keras import Sequential
-from Linear_Attention import LinearAttentionLayer
+from Linear_Attention import LinearAttentionLayer,FullAttentionLayer
 import keras_nlp
 
 class Linear_Transformer_Encoder(tf.keras.Model):
     
     def __init__(self,n_enc_layers=6,dim=256,n_heads=8,ffn_dim=1024,dropout=0.2):
         super().__init__()
-        self.MHA = [LinearAttentionLayer(d_model=dim, n_heads=n_heads) for _ in range(n_enc_layers)]
+
+        # self.MHA = [FullAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_enc_layers)] #18GB
+        self.MHA = [LinearAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_enc_layers)]
         self.norm1 = [LayerNormalization(axis=-1) for _ in range(n_enc_layers)]
         self.norm2 = [LayerNormalization(axis=-1) for _ in range(n_enc_layers)]
         self.do1 = [Dropout(dropout) for _ in range(n_enc_layers)]
@@ -35,8 +37,10 @@ class Linear_Transformer_Decoder(tf.keras.Model):
     
     def __init__(self,n_dec_layers=6,dim=256,n_heads=8,ffn_dim=1024,dropout=0.2,return_inter = False):
         super().__init__()
-        self.MHA1 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads) for _ in range(n_dec_layers)]
-        self.MHA2 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads) for _ in range(n_dec_layers)]
+        # self.MHA1 = [FullAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
+        # self.MHA2 = [FullAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
+        self.MHA1 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads ,d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
+        self.MHA2 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads ,d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
         self.norm1 = [LayerNormalization(axis=-1) for _ in range(n_dec_layers)]
         self.norm2 = [LayerNormalization(axis=-1) for _ in range(n_dec_layers)]
         self.norm3 = [LayerNormalization(axis=-1) for _ in range(n_dec_layers)]
