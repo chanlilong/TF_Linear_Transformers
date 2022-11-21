@@ -31,37 +31,31 @@ def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
         X = dot_prod - diag_data - tf.reduce_max(X, axis=(-1,-3), keepdims=True)
     return ratio*tf.exp(X + 1e-08)
     
-@tf.function(jit_compile=True)
-def causal_attn(qs, ks, vs):
+@tf.function(jit_compile=False)
+def causal_linear_attn(qs, ks, vs):
   """Computes not-normalized FAVOR causal attention A_{masked}V.
   Args:
-    qs: query_prime tensor of the shape [B,L,H,M].
-    ks: key_prime tensor of the shape [B,L,H,M].
-    vs: value tensor of the shape [B,L,H,D].
+    qs: query_prime tensor of the shape [B,L,H,D].
+    ks: key_prime tensor of the shape [B,L,H,D].
+    vs: value tensor of the shape [B,L,H,K].
   Returns:
     Not-normalized FAVOR causal attention A_{masked}V.
-
-    WARNING:Initial Compilation will take 1min+
-            after that its blazing
   """
 
   result = []
   result_norm = []
-  B,I,J,K = ks.shape
-  _,_,_,L = vs.shape
-  sums = tf.zeros((B,J,K,L))
-  sums_norm = tf.zeros((B,J,K))
+  B,_,H,D = ks.shape
+  _,_,_,K = vs.shape
+  sums = tf.zeros((B,H,D,K))
 
+  Z = tf.cumsum(qs,axis=1)
   for index in range(qs.shape[1]):
-    sums_norm = sums_norm  + ks[:,index]
-    sums = sums + tf.einsum("ijk,ijl->ijkl", ks[:,index], vs[:,index])
-    result.append(tf.einsum("ijkl,ijk->ijl", sums, qs[:,index])[None,...])
-    result_norm.append(tf.reduce_sum(qs[:,index] * sums_norm, axis=2,keepdims=True)[None,...])
+    sums = sums + tf.einsum("bhd,bhk->bhdk", ks[:,index], vs[:,index])
+    result.append(tf.einsum("bhdk,bhd->bhk", sums, qs[:,index])[:,None,...]) #expand time axis
 
-  result = tf.concat(result, axis=1)
-  result_norm = tf.concat(result_norm, axis=1)
+  result = tf.concat(result, axis=1) #concat in time axis
 
-  return result/result_norm
+  return result/Z
 
 class LinearAttentionLayer(tf.keras.Model):
     """Implement the attention layer. Namely project the inputs to multi-head
@@ -118,7 +112,7 @@ class LinearAttentionLayer(tf.keras.Model):
         K_lin = self.feat_proj(keys)
 
         if self.causal:
-            V_lin = causal_attn(Q_lin, K_lin, values)
+            V_lin = causal_linear_attn(Q_lin, K_lin, values)
         else:
             Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)
 
