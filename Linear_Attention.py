@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras.layers import Dense
 import math
+import numpy as np
 
 @tf.function(jit_compile=True)
 def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
@@ -9,6 +10,7 @@ def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
     Args:
         X: query_prime tensor of the shape [B,L,H,M].
     """
+    n_rand_feats = np.minimum(n_rand_feats,X.shape[3])
     data_normalizer = 1.0 / (math.sqrt(math.sqrt(X.shape[-1])))
     X = data_normalizer*X
     W = tf.random.normal((1,n_rand_feats,X.shape[3]))
@@ -31,7 +33,7 @@ def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
         X = dot_prod - diag_data - tf.reduce_max(X, axis=(-1,-3), keepdims=True)
     return ratio*tf.exp(X + 1e-08)
     
-@tf.function(jit_compile=False)
+@tf.function(jit_compile=True)
 def causal_linear_attn(qs, ks, vs):
   """Computes not-normalized FAVOR causal attention A_{masked}V.
   Args:
@@ -43,7 +45,7 @@ def causal_linear_attn(qs, ks, vs):
   """
 
   result = []
-  result_norm = []
+
   B,_,H,D = ks.shape
   _,_,_,K = vs.shape
   sums = tf.zeros((B,H,D,K))
@@ -92,8 +94,8 @@ class LinearAttentionLayer(tf.keras.Model):
         self.value_projection = Dense(d_values * n_heads)
         self.out_projection = Dense(d_model)
         self.n_heads = n_heads
-        # self.feat_proj = lambda x,is_query=False:tf.nn.elu(x)+1 #From "Transformers are RNNs"
-        self.feat_proj = project_feat_FAVOR
+        self.feat_proj = lambda x,is_query=False:tf.nn.elu(x)+1 #From "Transformers are RNNs"
+        # self.feat_proj = project_feat_FAVOR
         self.causal = causal
 
     def call(self, queries, keys, values):
@@ -148,7 +150,7 @@ class FullAttentionLayer(tf.keras.Model):
                           global dispatcher)
     """
     def __init__(self, d_model, n_heads, d_keys=None,
-                 d_values=None, d_model_keys=None, event_dispatcher=""):
+                 d_values=None, d_model_keys=None, causal=False):
         super().__init__()
 
         # Fill d_keys and d_values
@@ -163,7 +165,7 @@ class FullAttentionLayer(tf.keras.Model):
         self.n_heads = n_heads
         # self.feat_proj = lambda x:tf.nn.elu(x)+1 #From "Transformers are RNNs"
         # self.feat_proj = project_feat_FAVOR
-
+        self.causal = causal
     def call(self, queries, keys, values):
 
         # Extract the dimensions into local variables
@@ -178,6 +180,12 @@ class FullAttentionLayer(tf.keras.Model):
         D = keys.shape[-1]
         sm_map = tf.einsum("nlhd,nshd->nlhs",queries,keys)
         sm_map = sm_map/math.sqrt(D)
+        if self.causal:
+            mask = tf.linalg.band_part(tf.ones((1,sm_map.shape[1], sm_map.shape[3]), tf.bool), -1, 0)
+            mask = tf.expand_dims(mask,2)
+            mask = tf.repeat(mask,sm_map.shape[2],axis=2)
+            mask = tf.repeat(mask,sm_map.shape[0],axis=0)
+            sm_map = tf.where(mask,sm_map,-np.inf)
         sm_map = tf.nn.softmax(sm_map,axis=1)
         attn = tf.einsum("nlhs,nshd->nlhd",sm_map,values)
 

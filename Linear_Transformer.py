@@ -39,7 +39,7 @@ class Linear_Transformer_Decoder(tf.keras.Model):
         super().__init__()
         # self.MHA1 = [FullAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
         # self.MHA2 = [FullAttentionLayer(d_model=dim, n_heads=n_heads , d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
-        self.MHA1 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads ,d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
+        self.MHA1 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads ,d_keys=dim,d_values=dim,d_model_keys=dim,causal=True) for _ in range(n_dec_layers)]
         self.MHA2 = [LinearAttentionLayer(d_model=dim, n_heads=n_heads ,d_keys=dim,d_values=dim,d_model_keys=dim) for _ in range(n_dec_layers)]
         self.norm1 = [LayerNormalization(axis=-1) for _ in range(n_dec_layers)]
         self.norm2 = [LayerNormalization(axis=-1) for _ in range(n_dec_layers)]
