@@ -59,6 +59,7 @@ def causal_linear_attn(qs, ks, vs):
 
   return result/Z
 
+
 class LinearAttentionLayer(tf.keras.Model):
     """Implement the attention layer. Namely project the inputs to multi-head
     queries, keys and values, call the attention implementation and then
@@ -193,3 +194,82 @@ class FullAttentionLayer(tf.keras.Model):
 
         # Project the output and return
         return self.out_projection(new_values)
+    
+class NystromAttentionLayer(tf.keras.Model):
+    """
+    Implements Nystrom Attention
+    Arguments
+    ---------
+        attention: Specific inner attention implementation that just computes a
+                   weighted average of values given a similarity of queries and
+                   keys.
+        d_model: The input feature dimensionality for the queries source
+        n_heads: The number of heads for the multi head attention
+        d_keys: The dimensionality of the keys/queries
+                (default: d_model/n_heads)
+        d_values: The dimensionality of the values (default: d_model/n_heads)
+        d_model_keys: The input feature dimensionality for keys source
+        event_dispatcher: str or EventDispatcher instance to be used by this
+                          module for dispatching events (default: the default
+                          global dispatcher)
+    """
+    def __init__(self, d_model, n_heads, d_keys=None,
+                 d_values=None, d_model_keys=None, n_landmarks=128,causal=False):
+        super().__init__()
+
+        # Fill d_keys and d_values
+        d_keys = d_keys or (d_model//n_heads)
+        d_values = d_values or (d_model//n_heads)
+        d_model_keys = d_model_keys or d_model
+
+        self.query_projection = Dense(d_keys * n_heads)
+        self.key_projection = Dense(d_keys * n_heads)
+        self.value_projection = Dense(d_values * n_heads)
+        self.out_projection = Dense(d_model)
+        self.n_heads = n_heads
+        self.n_landmarks = n_landmarks
+        
+    @tf.function(jit_compile=False)
+    def iterative_inv(self,mat, n_iter = 6):
+        I = tf.eye(mat.shape[-1])
+        K = mat
+
+        V = 1 / tf.reduce_max(tf.reduce_sum(K, axis = -2), axis = -1)[:, :, None, None] * tf.transpose(K,perm=(0,1,3,2))
+        # print(V.shape,K.shape) #B,H,K,K
+        for _ in range(n_iter):
+            KV = tf.matmul(K, V)
+            V = tf.matmul(0.25 * V, 13 * I - tf.matmul(KV, 15 * I - tf.matmul(KV, 7 * I - KV)))
+        return V
+
+    def call(self, queries, keys, values):
+
+        # Extract the dimensions into local variables
+        N, L, _ = queries.shape
+        _, S, _ = keys.shape
+        H = self.n_heads
+
+        # Project the queries/keys/values
+        queries = tf.reshape(self.query_projection(queries),(N, L, H, -1))
+        keys = tf.reshape(self.key_projection(keys),(N, S, H, -1))
+        values = tf.reshape(self.value_projection(values),(N, S, H, -1))
+        
+        queries = tf.transpose(queries,(0,2,1,3))
+        keys = tf.transpose(keys,(0,2,1,3))
+        values = tf.transpose(values,(0,2,1,3))
+    
+    
+        B,H,L,D = queries.shape
+        _,_,T,_=keys.shape
+
+        Q_l = tf.reduce_mean(tf.reshape(queries,(B,H,self.n_landmarks,L//self.n_landmarks,D)),axis=-2)#BHKD
+        K_l = tf.reduce_mean(tf.reshape(keys,(B,H,self.n_landmarks,L//self.n_landmarks,D)),axis=-2)
+
+        kernel_1 = tf.nn.softmax(tf.einsum("bhld,bhkd->bhlk",queries,K_l),axis=-1)
+        kernel_2 = tf.nn.softmax(tf.einsum("bhtd,bhkd->bhtk",Q_l,K_l),axis=-1)
+        kernel_3 = tf.nn.softmax(tf.einsum("bhtd,bhld->bhtl",Q_l,keys),axis=-1)
+
+        X = tf.matmul(tf.matmul(kernel_1, self.iterative_inv(kernel_2)), tf.matmul(kernel_3, values))
+        # Project the output and return
+        
+        X = tf.reshape(tf.transpose(X,(0,2,1,3)),(B,L,-1))
+        return self.out_projection(X)
