@@ -3,7 +3,7 @@ from tensorflow.keras.layers import Dense
 import math
 import numpy as np
 
-@tf.function(jit_compile=True)
+@tf.function(jit_compile=False)
 def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
     """
     Projects Tensor according to approximate softmax kernel.
@@ -33,31 +33,33 @@ def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
         X = dot_prod - diag_data - tf.reduce_max(X, axis=(-1,-3), keepdims=True)
     return ratio*tf.exp(X + 1e-08)
     
-@tf.function(jit_compile=True)
+@tf.function(jit_compile=False)
 def causal_linear_attn(qs, ks, vs):
-  """Computes not-normalized FAVOR causal attention A_{masked}V.
-  Args:
+    """Computes not-normalized FAVOR causal attention A_{masked}V.
+    Args:
     qs: query_prime tensor of the shape [B,L,H,D].
     ks: key_prime tensor of the shape [B,L,H,D].
     vs: value tensor of the shape [B,L,H,K].
-  Returns:
+    Returns:
     Not-normalized FAVOR causal attention A_{masked}V.
-  """
+    """
 
-  result = []
+    # result = []
 
-  B,_,H,D = ks.shape
-  _,_,_,K = vs.shape
-  sums = tf.zeros((B,H,D,K))
+    # B,_,H,D = ks.shape
+    # _,_,_,K = vs.shape
+    # sums = tf.zeros((B,H,D,K))
+    dot_prod = tf.einsum("blhd,blhk->blhdk",ks,vs)
+    sums = tf.cumsum(dot_prod,axis=1)
+    result = tf.einsum("blhdk,blhd->blhk",sums,qs)
+    Z = tf.cumsum(qs,axis=1)
 
-  Z = tf.cumsum(qs,axis=1)
-  for index in range(qs.shape[1]):
-    sums = sums + tf.einsum("bhd,bhk->bhdk", ks[:,index], vs[:,index])
-    result.append(tf.einsum("bhdk,bhd->bhk", sums, qs[:,index])[:,None,...]) #expand time axis
+#   for index in range(qs.shape[1]):
+#     sums = sums + tf.einsum("bhd,bhk->bhdk", ks[:,index], vs[:,index])
+#     result.append(tf.einsum("bhdk,bhd->bhk", sums, qs[:,index])[:,None,...]) #expand time axis
 
-  result = tf.concat(result, axis=1) #concat in time axis
-
-  return result/Z
+#   result = tf.concat(result, axis=1) #concat in time axis
+    return result/Z
 
 
 class LinearAttentionLayer(tf.keras.Model):
@@ -99,7 +101,7 @@ class LinearAttentionLayer(tf.keras.Model):
         # self.feat_proj = project_feat_FAVOR
         self.causal = causal
 
-    def call(self, queries, keys, values):
+    def call(self, queries, keys, values,return_QK=False):
 
         # Extract the dimensions into local variables
         N, L, _ = queries.shape
@@ -116,6 +118,8 @@ class LinearAttentionLayer(tf.keras.Model):
 
         if self.causal:
             V_lin = causal_linear_attn(Q_lin, K_lin, values)
+            if return_QK:
+              Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)  
         else:
             Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)
 
@@ -125,9 +129,10 @@ class LinearAttentionLayer(tf.keras.Model):
 
 
         new_values = tf.reshape(V_lin,(N, L, -1))
-
+        QK = None if not return_QK else tf.reduce_mean(tf.einsum("nlhd,nthd,nlh->nlht",Q_lin,K_lin,Z),axis=2)
+        # QK = [Q_lin,K_lin]
         # Project the output and return
-        return self.out_projection(new_values)
+        return self.out_projection(new_values),QK
 
 class FullAttentionLayer(tf.keras.Model):
     """Implement the attention layer. Namely project the inputs to multi-head
@@ -167,7 +172,7 @@ class FullAttentionLayer(tf.keras.Model):
         # self.feat_proj = lambda x:tf.nn.elu(x)+1 #From "Transformers are RNNs"
         # self.feat_proj = project_feat_FAVOR
         self.causal = causal
-    def call(self, queries, keys, values):
+    def call(self, queries, keys, values,return_QK=False):
 
         # Extract the dimensions into local variables
         N, L, _ = queries.shape
@@ -191,9 +196,9 @@ class FullAttentionLayer(tf.keras.Model):
         attn = tf.einsum("nlhs,nshd->nlhd",sm_map,values)
 
         new_values = tf.reshape(attn,(N, L, -1))
-
+        QK = None if not return_QK else tf.reduce_mean(sm_map,axis=2)
         # Project the output and return
-        return self.out_projection(new_values)
+        return self.out_projection(new_values),QK
     
 class NystromAttentionLayer(tf.keras.Model):
     """
@@ -214,7 +219,7 @@ class NystromAttentionLayer(tf.keras.Model):
                           global dispatcher)
     """
     def __init__(self, d_model, n_heads, d_keys=None,
-                 d_values=None, d_model_keys=None, n_landmarks=128,causal=False):
+                 d_values=None, d_model_keys=None, n_landmarks_div=3,causal=False):
         super().__init__()
 
         # Fill d_keys and d_values
@@ -227,7 +232,7 @@ class NystromAttentionLayer(tf.keras.Model):
         self.value_projection = Dense(d_values * n_heads)
         self.out_projection = Dense(d_model)
         self.n_heads = n_heads
-        self.n_landmarks = n_landmarks
+        self.n_landmarks = n_landmarks_div
         
     @tf.function(jit_compile=False)
     def iterative_inv(self,mat, n_iter = 6):

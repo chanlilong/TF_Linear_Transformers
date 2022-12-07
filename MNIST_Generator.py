@@ -13,7 +13,7 @@ class MNIST_Generative_Model(tf.keras.Model):
         self.linear_out = Dense(1,activation = tf.nn.sigmoid)
         self.return_inter=return_inter
         self.int_emb = tf.keras.layers.Embedding(10,dim//2)
-    def call(self,x,y):
+    def call(self,x,y,return_QK=False):
 
         int_emb = self.int_emb(y)[:,None,:]
         int_emb = tf.repeat(int_emb,784//2,axis=1)
@@ -21,9 +21,9 @@ class MNIST_Generative_Model(tf.keras.Model):
         query = tf.concat([query,tf.squeeze(int_emb,axis=2)],axis=2)#[16,392,128], [16,392,1,128]
 
         x = self.linear_in(x)
-        x = self.transformer(query,x)
+        x,QK = self.transformer(query,x,return_QK)
         if self.return_inter:
             x = [self.linear_out(i) for i in x]
         else:
             x = self.linear_out(x)
-        return x
+        return x,QK
