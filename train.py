@@ -5,22 +5,22 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
-
+import seaborn as sns
 
 
 EPOCHS =5
 N_BATCH = 16
 
 if __name__=="__main__":
-    LOSS = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
+    # LOSS = tf.keras.losses.MeanAbsoluteError(tf.keras.losses.Reduction.NONE)#reduction=tf.keras.losses.Reduction.NONE
     
     @tf.function
     def train_mnist(x1,x2,y):
 
         with tf.GradientTape() as tape:
-            pred = model(x1,y)
+            pred,_ = model(x1,y)
             # loss = sum([tf.reduce_mean(LOSS(x2,p)) for p in pred])
-            loss = sum([tf.reduce_mean(tf.square(x2-p)) for p in pred])
+            loss = sum([tf.reduce_mean(0.75*tf.square(x2-p)+0.25*tf.abs(x2-p)) for p in pred])
 
         dl_dw = tape.gradient(loss, model.trainable_variables)
         opt.apply_gradients(zip(dl_dw, model.trainable_variables))
@@ -39,7 +39,7 @@ if __name__=="__main__":
             # Memory growth must be set before GPUs have been initialized
             print(e)
 
-    writer = SummaryWriter(logdir = "./tensorboard_logs/mnist_generator_linearattn2")
+    writer = SummaryWriter(logdir = "./tensorboard_logs/mnist_generator_linearattnL1")
 
     model = MNIST_Generative_Model(dim=64,return_inter=True)
     dataset = MNIST()
@@ -56,8 +56,11 @@ if __name__=="__main__":
             
             if itr%2==0:
                 writer.add_scalar("train_losses/loss",loss.numpy().item()/6,itr)
-            if itr%10==0:
-                pred = model(x1[0:1],y[0:1],training=False)[-1]
+            if itr%100==0:
+                pred,qk = model(x1[0:1],y[0:1],True,training=False)
+                pred = pred[-1]
+                # print(qk[0].shape,qk[1].shape)
+                # qk = tf.reduce_mean(tf.einsum("nlhd,nthd->nlht",qk[0],qk[1]),axis=2)
                 pred_img = tf.stack([x1[0:1],pred],axis=1).numpy()
                 pred_img = pred_img.reshape(28,28,1)
 
@@ -67,5 +70,9 @@ if __name__=="__main__":
                 writer.add_figure("images/pred",fig,itr)
                 plt.close()
 
+                fig,ax = plt.subplots(1,1,figsize=(8,8))
+                sns.heatmap(qk[0].numpy(),ax=ax)
+                writer.add_figure("images/attention",fig,itr)
+                plt.close()
         model.save_weights("./model.h5")
 model.save_weights("./model.h5")
