@@ -19,19 +19,19 @@ class Linear_Transformer_Encoder(tf.keras.Model):
                                Dropout(dropout),\
                                Dense(dim,activation=tf.nn.relu)]) for _ in range(n_enc_layers)]
         self.pos_enc = keras_nlp.layers.SinePositionEncoding()
-    def call(self,x):
+    def call(self,x,return_QK=False):
         positional_encoding = self.pos_enc(x)
         x = x+positional_encoding
         # print(x.shape)
         for mha,do,norm,ffn,norm2 in zip(self.MHA,self.do1,self.norm1,self.FFN,self.norm2):
             
-            attn1,_ = mha(x,x,x)
+            attn1,attn_map = mha(x,x,x,return_QK)
             attn1 = do(attn1)
             x = norm(attn1+x)
             f = ffn(x)
             x = norm2(f+x)
             
-        return x
+        return x,attn_map
             
 class Linear_Transformer_Decoder(tf.keras.Model):
     
@@ -88,7 +88,7 @@ class Linear_Transformer(tf.keras.Model):
         
     def call(self,Q,K,return_QK=False):
         
-        Q_ = self.enc(Q)
-        x,qk  = self.dec(Q_,K,return_QK)
+        K,qk_enc = self.enc(K,return_QK)
+        x,qk  = self.dec(Q,K,return_QK)
         
-        return x,qk
+        return x,(qk_enc,qk)
