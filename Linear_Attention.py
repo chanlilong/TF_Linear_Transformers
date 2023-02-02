@@ -3,7 +3,7 @@ from tensorflow.keras.layers import Dense
 import math
 import numpy as np
 
-@tf.function(jit_compile=False)
+@tf.function(jit_compile=True)
 def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
     """
     Projects Tensor according to approximate softmax kernel.
@@ -33,7 +33,7 @@ def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
         X = dot_prod - diag_data - tf.reduce_max(X, axis=(-1,-3), keepdims=True)
     return ratio*tf.exp(X + 1e-08)
     
-@tf.function(jit_compile=False)
+@tf.function(jit_compile=True)
 def causal_linear_attn(qs, ks, vs):
     """Computes not-normalized FAVOR causal attention A_{masked}V.
     Args:
@@ -61,7 +61,17 @@ def causal_linear_attn(qs, ks, vs):
 #   result = tf.concat(result, axis=1) #concat in time axis
     return result/Z
 
+@tf.function(jit_compile=True)
+def iterative_inv(mat, n_iter = 6):
+    I = tf.eye(mat.shape[-1])
+    K = mat
 
+    V = 1 / tf.reduce_max(tf.reduce_sum(K, axis = -2), axis = -1)[:, :, None, None] * tf.transpose(K,perm=(0,1,3,2))
+    # print(V.shape,K.shape) #B,H,K,K
+    for _ in range(n_iter):
+        KV = tf.matmul(K, V)
+        V = tf.matmul(0.25 * V, 13 * I - tf.matmul(KV, 15 * I - tf.matmul(KV, 7 * I - KV)))
+    return V
 class LinearAttentionLayer(tf.keras.Model):
     """Implement the attention layer. Namely project the inputs to multi-head
     queries, keys and values, call the attention implementation and then
@@ -221,7 +231,7 @@ class NystromAttentionLayer(tf.keras.Model):
                           global dispatcher)
     """
     def __init__(self, d_model, n_heads, d_keys=None,
-                 d_values=None, d_model_keys=None, n_landmarks_div=3,causal=False):
+                 d_values=None, d_model_keys=None, n_landmarks_div=4,causal=False):
         super().__init__()
 
         # Fill d_keys and d_values
@@ -236,19 +246,9 @@ class NystromAttentionLayer(tf.keras.Model):
         self.n_heads = n_heads
         self.n_landmarks = n_landmarks_div
         
-    @tf.function(jit_compile=False)
-    def iterative_inv(self,mat, n_iter = 6):
-        I = tf.eye(mat.shape[-1])
-        K = mat
 
-        V = 1 / tf.reduce_max(tf.reduce_sum(K, axis = -2), axis = -1)[:, :, None, None] * tf.transpose(K,perm=(0,1,3,2))
-        # print(V.shape,K.shape) #B,H,K,K
-        for _ in range(n_iter):
-            KV = tf.matmul(K, V)
-            V = tf.matmul(0.25 * V, 13 * I - tf.matmul(KV, 15 * I - tf.matmul(KV, 7 * I - KV)))
-        return V
 
-    def call(self, queries, keys, values):
+    def call(self, queries, keys, values,return_QK=False):
 
         # Extract the dimensions into local variables
         N, L, _ = queries.shape
@@ -275,8 +275,8 @@ class NystromAttentionLayer(tf.keras.Model):
         kernel_2 = tf.nn.softmax(tf.einsum("bhtd,bhkd->bhtk",Q_l,K_l),axis=-1)
         kernel_3 = tf.nn.softmax(tf.einsum("bhtd,bhld->bhtl",Q_l,keys),axis=-1)
 
-        X = tf.matmul(tf.matmul(kernel_1, self.iterative_inv(kernel_2)), tf.matmul(kernel_3, values))
+        X = tf.matmul(tf.matmul(kernel_1, iterative_inv(kernel_2)), tf.matmul(kernel_3, values))
         # Project the output and return
         
         X = tf.reshape(tf.transpose(X,(0,2,1,3)),(B,L,-1))
-        return self.out_projection(X)
+        return self.out_projection(X),None
