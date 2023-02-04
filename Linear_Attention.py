@@ -3,34 +3,42 @@ from tensorflow.keras.layers import Dense
 import math
 import numpy as np
 
+def get_orth_random_mat(n_dim,rand_feats=64):
+    tf.random.set_seed(42)
+    m = tf.maximum(n_dim,rand_feats)
+    W = tf.random.normal((m,m))
+    W_,_= tf.linalg.qr(W,full_matrices=True)
+    W_ /= tf.linalg.norm(W_,axis=1,keepdims=True)
+    W_ *= math.sqrt(n_dim)#
+    tf.random.set_seed(None)
+    
+    return W_[:,:rand_feats]
+    
 @tf.function(jit_compile=True)
-def project_feat_FAVOR(X,is_query=False,n_rand_feats=128):
+def project_feat_FAVOR(X,W,is_query=False):
     """
     Projects Tensor according to approximate softmax kernel.
     Args:
         X: query_prime tensor of the shape [B,L,H,M].
     """
-    n_rand_feats = np.minimum(n_rand_feats,X.shape[3])
+    # n_rand_feats = np.minimum(n_rand_feats,X.shape[3])
     data_normalizer = 1.0 / (math.sqrt(math.sqrt(X.shape[-1])))
     X = data_normalizer*X
-    W = tf.random.normal((1,n_rand_feats,X.shape[3]))
-    W_,_= tf.linalg.qr(W)
-    W_ /= tf.linalg.norm(W_,axis=1,keepdims=True)
-    W_ *= math.sqrt(X.shape[3])#
-    W_ = tf.repeat(W_,X.shape[0],axis=0)
+
+    # W = tf.repeat(W,X.shape[0],axis=0)
     
-    ratio = 1.0 / math.sqrt(W_.shape[1])
+    ratio = 1.0 / math.sqrt(W.shape[1])
     
     diag_data = tf.square(X)
-    diag_data = tf.reduce_sum(diag_data, axis=-1)
+    diag_data = tf.reduce_sum(diag_data, axis=-1, keepdims=True)
     diag_data = (diag_data / 2.0) * data_normalizer * data_normalizer
-    diag_data = tf.expand_dims(diag_data, axis=-1)
 
-    dot_prod = tf.einsum("bdm,blhm -> blhd",W_,X)
+    dot_prod = tf.einsum("md,blhm -> blhd",W,X)
+
     if is_query:
-        X = dot_prod - diag_data - tf.reduce_max(X, axis=-1, keepdims=True)#- tf.linalg.norm(X,axis=3)[...,None]**2/2
+        X = dot_prod - diag_data - tf.stop_gradient(tf.reduce_max(X, axis=-1, keepdims=True))#- tf.linalg.norm(X,axis=3)[...,None]**2/2
     else:
-        X = dot_prod - diag_data - tf.reduce_max(X, axis=(-1,-3), keepdims=True)
+        X = dot_prod - diag_data - tf.stop_gradient(tf.reduce_max(X, axis=(-1,-3), keepdims=True))
     return ratio*tf.exp(X + 1e-08)
     
 @tf.function(jit_compile=True)
@@ -107,8 +115,9 @@ class LinearAttentionLayer(tf.keras.Model):
         self.value_projection = Dense(d_values * n_heads)
         self.out_projection = Dense(d_model)
         self.n_heads = n_heads
-        # self.feat_proj = lambda x,is_query=False:tf.nn.elu(x)+1 #From "Transformers are RNNs"
+        # self.feat_proj = lambda x,W,is_query=False:tf.nn.elu(x)+1 #From "Transformers are RNNs"
         self.feat_proj = project_feat_FAVOR
+        self.W = get_orth_random_mat(d_model,rand_feats=128)
         self.causal = causal
 
     def call(self, queries, keys, values,return_QK=False):
@@ -123,13 +132,13 @@ class LinearAttentionLayer(tf.keras.Model):
         keys = tf.reshape(self.key_projection(keys),(N, S, H, -1))
         values = tf.reshape(self.value_projection(values),(N, S, H, -1))
 
-        Q_lin = self.feat_proj(queries,is_query=True)
-        K_lin = self.feat_proj(keys)
+        Q_lin = self.feat_proj(queries,self.W,is_query=True)
+        K_lin = self.feat_proj(keys,self.W)
 
         if self.causal:
             V_lin = causal_linear_attn(Q_lin, K_lin, values)
             if return_QK:
-              Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)  
+                Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)  
         else:
             Z = 1/(tf.einsum("nlhd,nhd->nlh", Q_lin, tf.reduce_sum(K_lin,axis=1))+1e-10)
 
