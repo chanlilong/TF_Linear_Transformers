@@ -3,9 +3,10 @@
 - Linear Attention in this repo is through kernel approximation of the softmax function to avoid O(n^2) cost
 
 $SM(X,Y) = \phi(X)\phi(Y)$
-$\phi$ in this case is defined by two papers:
+$\phi$ in this case is defined by two papers, the third paper uses a low rank approximation of the softmax attention:
 1. [Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention](https://arxiv.org/abs/2006.16236)
 2. [Rethinking Attention with Performers](https://arxiv.org/abs/2009.14794)
+3. [Nyströmformer: A Nyström-Based Algorithm for Approximating Self-Attention](https://arxiv.org/abs/2102.03902)
 
 - Causal attention is also implemented through tf.cumsum and tf.einsum
 - Training script for generating MNIST through transformers is added
