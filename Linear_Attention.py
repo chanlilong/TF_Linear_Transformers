@@ -21,12 +21,9 @@ def project_feat_FAVOR(X,W,is_query=False):
     Args:
         X: query_prime tensor of the shape [B,L,H,M].
     """
-    # n_rand_feats = np.minimum(n_rand_feats,X.shape[3])
     data_normalizer = 1.0 / (math.sqrt(math.sqrt(X.shape[-1])))
     X = data_normalizer*X
 
-    # W = tf.repeat(W,X.shape[0],axis=0)
-    
     ratio = 1.0 / math.sqrt(W.shape[1])
     
     diag_data = tf.square(X)
@@ -146,7 +143,6 @@ class LinearAttentionLayer(tf.keras.Model):
 
             V_lin = tf.einsum("nlhd,nhmd,nlh->nlhm", Q_lin, KV, Z)
 
-
         new_values = tf.reshape(V_lin,(N, L, -1))
         QK = None if not return_QK else tf.reduce_mean(tf.einsum("nlhd,nthd,nlh->nlht",Q_lin,K_lin,Z),axis=2)
         # QK = [Q_lin,K_lin]
@@ -240,7 +236,7 @@ class NystromAttentionLayer(tf.keras.Model):
                           global dispatcher)
     """
     def __init__(self, d_model, n_heads, d_keys=None,
-                 d_values=None, d_model_keys=None, n_landmarks_div=4,causal=False):
+                 d_values=None, d_model_keys=None, n_landmarks=128,causal=False):
         super().__init__()
 
         # Fill d_keys and d_values
@@ -253,7 +249,7 @@ class NystromAttentionLayer(tf.keras.Model):
         self.value_projection = Dense(d_values * n_heads)
         self.out_projection = Dense(d_model)
         self.n_heads = n_heads
-        self.n_landmarks = n_landmarks_div
+        self.n_landmarks = n_landmarks
         
 
 
